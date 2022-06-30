@@ -14,14 +14,26 @@ contract Casino {
   struct AcceptedBet {
     address sideB;
     uint acceptedAt;
-    uint randomB;
+    uint randomBHash;
   }   // struct AcceptedBet
+
+  struct SettlingBet {
+    address sideA;
+    address sideB;
+    uint value;
+    uint valA;
+    uint valB;
+    bool aTrue;
+    bool bTrue;
+  }
 
   // Proposed bets, keyed by the commitment value
   mapping(uint => ProposedBet) public proposedBet;
 
   // Accepted bets, also keyed by commitment value
   mapping(uint => AcceptedBet) public acceptedBet;
+
+  mapping(uint => SettlingBet) public settlingBet;
 
   event BetProposed (
     uint indexed _commitment,
@@ -59,7 +71,7 @@ contract Casino {
 
 
   // Called by sideB to continue
-  function acceptBet(uint _commitment, uint _random) external payable {
+  function acceptBet(uint _commitment, uint _randomHash) external payable {
 
     require(!proposedBet[_commitment].accepted,
       "Bet has already been accepted");
@@ -70,41 +82,71 @@ contract Casino {
 
     acceptedBet[_commitment].sideB = msg.sender;
     acceptedBet[_commitment].acceptedAt = block.timestamp;
-    acceptedBet[_commitment].randomB = _random;
+    acceptedBet[_commitment].randomBHash = _randomHash;
     proposedBet[_commitment].accepted = true;
 
     emit BetAccepted(_commitment, proposedBet[_commitment].sideA);
   }   // function acceptBet
 
-
-  // Called by sideA to reveal their random value and conclude the bet
-  function reveal(uint _random) external {
+  function verifyA(uint _random) external {
     uint _commitment = uint256(keccak256(abi.encodePacked(_random)));
-    address payable _sideA = payable(msg.sender);
-    address payable _sideB = payable(acceptedBet[_commitment].sideB);
-    uint _agreedRandom = _random ^ acceptedBet[_commitment].randomB;
-    uint _value = proposedBet[_commitment].value;
+    
+    require(proposedBet[_commitment].sideA == msg.sender, "Not a bet you placed or wrong value");
+    require(proposedBet[_commitment].accepted, "Bet has not been accepted yet");
 
-    require(proposedBet[_commitment].sideA == msg.sender,
-      "Not a bet you placed or wrong value");
-    require(proposedBet[_commitment].accepted,
-      "Bet has not been accepted yet");
+    settlingBet[_commitment].sideA = msg.sender;
+    settlingBet[_commitment].valA = _random;
+    settlingBet[_commitment].aTrue = true;
+  }
 
-    // Pay and emit an event
-    if (_agreedRandom % 2 == 0) {
+  function verifyB(uint _commitment, uint _random) external {
+    uint hashB = uint256(keccak256(abi.encodePacked(_random)));
+    
+    require(acceptedBet[_commitment].sideB == msg.sender, "Not a bet you placed or wrong value");
+    require(proposedBet[_commitment].accepted, "Bet has not been accepted yet");
+    require(acceptedBet[_commitment].randomBHash == hashB, "Incorrect number given");
+
+    settlingBet[_commitment].sideB = msg.sender;
+    settlingBet[_commitment].valB = _random;
+    settlingBet[_commitment].bTrue = true;
+
+  }
+/*
+    struct SettlingBet {
+    address sideA;
+    address sideB;
+    uint value;
+    uint valA;
+    uint valB;
+    bool aTrue;
+    bool bTrue;
+  }*/
+
+  function settleUp(uint _commitment) external {
+    address payable sideA = payable(settlingBet[_commitment].sideA);
+    address payable sideB = payable(settlingBet[_commitment].sideB);
+    uint valA = settlingBet[_commitment].valA;
+    uint valB = settlingBet[_commitment].valB;
+    uint value = settlingBet[_commitment].value;
+
+    uint agreedRandom = valA ^ valB;
+
+    require(settlingBet[_commitment].aTrue, "side A has not verified yet");
+    require(settlingBet[_commitment].bTrue, "side B has not verified yet");
+
+     if (agreedRandom % 2 == 0) {
       // sideA wins
-      _sideA.transfer(2*_value);
-      emit BetSettled(_commitment, _sideA, _sideB, _value);
+      sideA.transfer(2*value);
+      emit BetSettled(_commitment, sideA, sideB, value);
     } else {
       // sideB wins
-      _sideB.transfer(2*_value);
-      emit BetSettled(_commitment, _sideB, _sideA, _value);      
+      sideB.transfer(2*value);
+      emit BetSettled(_commitment, sideB, sideA, value);      
     }
 
-    // Cleanup
     delete proposedBet[_commitment];
     delete acceptedBet[_commitment];
+    delete settlingBet[_commitment];
 
-  }  // function reveal
-
-}   // contract Casino
+  }
+}
